@@ -1,0 +1,77 @@
+name: TigerGate Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+env:
+  TIGERGATE_API_URL: https://api.staging.tigergate.dev/api/ci
+
+jobs:
+  # PR opened/updated → scan changed code only
+  pr-diff-scan:
+    if: github.event_name == 'pull_request'
+    name: PR Diff Scan
+    runs-on: ubuntu-latest
+
+    container:
+      image: tigergate/tigergate-cli:latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare Git + Fetch PR Base Branch
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+
+      - name: Run TigerGate Diff Scan
+        env:
+          TIGERGATE_API_KEY: ${{ secrets.TIGERGATE_API_KEY }}
+        run: |
+          tigergate scan \
+            --type all \
+            --scan-scope diff \
+            --fail-on critical,high \
+            --quality-gate \
+            --upload
+
+  # Merge to main → scan entire repository
+  full-scan:
+    if: github.event_name == 'push'
+    name: Full Scan (main)
+    runs-on: ubuntu-latest
+
+    container:
+      image: tigergate/tigergate-cli:latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare Git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Run TigerGate Full Scan
+        env:
+          TIGERGATE_API_KEY: ${{ secrets.TIGERGATE_API_KEY }}
+        run: |
+          tigergate scan \
+            --type all \
+            --scan-scope auto \
+            --fail-on critical,high \
+            --quality-gate \
+            --upload
