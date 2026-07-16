@@ -4,7 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -15,7 +16,7 @@ env:
   TIGERGATE_API_URL: https://api.staging.tigergate.dev/api/ci
 
 jobs:
-  # PR opened/updated → scan changed code only
+  # PR Scan (runs on the actual PR commit)
   pr-diff-scan:
     if: github.event_name == 'pull_request'
     name: PR Diff Scan
@@ -25,15 +26,37 @@ jobs:
       image: tigergate/tigergate-cli:latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout PR Head Commit
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Prepare Git + Fetch PR Base Branch
+      - name: Prepare Git
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git fetch --no-tags origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+          git fetch origin "${GITHUB_BASE_REF}" --depth=1
+
+      - name: Show Git Information
+        run: |
+          echo "========================================="
+          echo "GitHub Event Information"
+          echo "========================================="
+          echo "Event Name        : $GITHUB_EVENT_NAME"
+          echo "Repository        : $GITHUB_REPOSITORY"
+          echo "Branch            : $GITHUB_HEAD_REF"
+          echo "Base Branch       : $GITHUB_BASE_REF"
+          echo "GITHUB_SHA        : $GITHUB_SHA"
+          echo "PR HEAD SHA       : ${{ github.event.pull_request.head.sha }}"
+          echo "PR BASE SHA       : ${{ github.event.pull_request.base.sha }}"
+          echo ""
+
+          echo "Latest Commit"
+          git log -1 --stat
+
+          echo ""
+          echo "Recent Commits"
+          git log --oneline --decorate -5
 
       - name: Run TigerGate Diff Scan
         env:
@@ -46,7 +69,7 @@ jobs:
             --quality-gate \
             --upload
 
-  # Merge to main → scan entire repository
+  # Full Repository Scan after merge to main
   full-scan:
     if: github.event_name == 'push'
     name: Full Scan (main)
@@ -64,6 +87,23 @@ jobs:
       - name: Prepare Git
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Show Git Information
+        run: |
+          echo "========================================="
+          echo "Push Event Information"
+          echo "========================================="
+          echo "Event Name : $GITHUB_EVENT_NAME"
+          echo "Branch     : $GITHUB_REF_NAME"
+          echo "Commit SHA : $GITHUB_SHA"
+          echo ""
+
+          echo "Latest Commit"
+          git log -1 --stat
+
+          echo ""
+          echo "Recent Commits"
+          git log --oneline --decorate -5
 
       - name: Run TigerGate Full Scan
         env:
