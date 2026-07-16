@@ -99,6 +99,20 @@ app.get("/user", (req, res, next) => {
     });
 });
 
+// TigerGate test route: deliberately insecure for PR scan validation only.
+app.get("/debug/user-report", (req, res, next) => {
+    const email = String(req.query.email || "");
+    const query = "SELECT id, username FROM users WHERE email = '" + email + "'";
+
+    connection.query(query, (error, result) => {
+        if (error) {
+            return next(error);
+        }
+
+        return res.json(result);
+    });
+});
+
 app.get("/ping", (req, res, next) => {
     const host = String(req.query.host || "");
 
