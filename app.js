@@ -1,295 +1,187 @@
-// TigerGate Vulnerability Test File
-// Purpose: SAST + Secrets + Code Quality Testing
-
-const express = require("express");
-const mysql = require("mysql");
 const crypto = require("crypto");
+const { execFile } = require("child_process");
+const express = require("express");
+const fs = require("fs/promises");
 const jwt = require("jsonwebtoken");
-const child_process = require("child_process");
-const fs = require("fs");
+const mysql = require("mysql");
+const net = require("net");
+const path = require("path");
 
 const app = express();
+const filesDirectory = path.resolve(__dirname, "files");
 
-app.use(express.json());
+function requiredEnvironmentVariable(name) {
+    const value = process.env[name];
 
-// ===============================
-// Secrets Detection
-// ===============================
+    if (!value) {
+        throw new Error(`Missing required environment variable: ${name}`);
+    }
 
-const AWS_ACCESS_KEY_ID = "AKIA123456789FAKEKEY";
-const AWS_SECRET_ACCESS_KEY = "fakeAWSSecret123456789";
-const GITHUB_TOKEN = "ghp_fakegithubtoken123456";
-const JWT_SECRET = "supersecretpassword123";
-const STRIPE_SECRET_KEY = "sk_test_51FakeTigerGateSecretKey000000000";
-const SENDGRID_API_KEY = "SG.fakeTigerGateApiKeyForSastTesting.000000000000";
+    return value;
+}
 
-const DB_USER = "admin";
-const DB_PASSWORD = "password123";
-
-
-// ===============================
-// Insecure Database Config
-// ===============================
+const configuration = {
+    corsAllowedOrigin: requiredEnvironmentVariable("CORS_ALLOWED_ORIGIN"),
+    database: {
+        host: requiredEnvironmentVariable("DB_HOST"),
+        user: requiredEnvironmentVariable("DB_USER"),
+        password: requiredEnvironmentVariable("DB_PASSWORD"),
+        name: requiredEnvironmentVariable("DB_NAME")
+    },
+    jwtSecret: requiredEnvironmentVariable("JWT_SECRET")
+};
 
 const connection = mysql.createConnection({
-    host: "localhost",
-    user: DB_USER,
-    password: DB_PASSWORD,
-    database: "users"
+    host: configuration.database.host,
+    user: configuration.database.user,
+    password: configuration.database.password,
+    database: configuration.database.name
 });
 
+app.use(express.json({ limit: "10kb" }));
 
-// ===============================
-// SQL Injection
-// ===============================
+app.use((req, res, next) => {
+    const origin = req.get("origin");
 
-app.get("/user", (req,res)=>{
+    if (origin === configuration.corsAllowedOrigin) {
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Vary", "Origin");
+        res.header("Access-Control-Allow-Methods", "GET,POST,DELETE");
+        res.header("Access-Control-Allow-Headers", "Authorization,Content-Type");
+    }
 
-    let id = req.query.id;
-
-    let query =
-    "SELECT * FROM users WHERE id=" + id;
-
-    connection.query(query,(err,result)=>{
-        res.send(result);
-    });
-
+    next();
 });
 
+function requireAdministrator(req, res, next) {
+    const authorization = req.get("authorization");
 
-// ===============================
-// Command Injection
-// ===============================
+    if (!authorization || !authorization.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Authentication required" });
+    }
 
-app.get("/ping",(req,res)=>{
+    try {
+        const token = authorization.slice("Bearer ".length);
+        const payload = jwt.verify(token, configuration.jwtSecret, {
+            algorithms: ["HS256"]
+        });
 
-    let host = req.query.host;
-
-    child_process.exec(
-        "ping " + host,
-        function(error, stdout){
-
-            res.send(stdout);
-
+        if (payload.role !== "admin") {
+            return res.status(403).json({ error: "Administrator access required" });
         }
-    );
 
-});
+        req.user = payload;
+        return next();
+    } catch {
+        return res.status(401).json({ error: "Invalid token" });
+    }
+}
 
+function isValidHost(host) {
+    const hostnamePattern = /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$/;
 
-// ===============================
-// Weak Cryptography
-// ===============================
+    return net.isIP(host) !== 0 || hostnamePattern.test(host);
+}
 
-app.get("/hash",(req,res)=>{
+app.get("/user", (req, res, next) => {
+    const id = Number.parseInt(req.query.id, 10);
 
-    let password="admin123";
+    if (!Number.isSafeInteger(id) || id < 1) {
+        return res.status(400).json({ error: "A valid user id is required" });
+    }
 
-    let hash = crypto
-        .createHash("md5")
-        .update(password)
-        .digest("hex");
+    connection.query("SELECT id, username FROM users WHERE id = ?", [id], (error, result) => {
+        if (error) {
+            return next(error);
+        }
 
-    res.send(hash);
-
-});
-
-
-// ===============================
-// Weak JWT
-// ===============================
-
-app.get("/token",(req,res)=>{
-
-    let token = jwt.sign(
-        {
-            user:"admin",
-            role:"root"
-        },
-        JWT_SECRET
-    );
-
-    res.send(token);
-
-});
-
-
-// ===============================
-// Path Traversal
-// ===============================
-
-app.get("/file",(req,res)=>{
-
-    let filename=req.query.name;
-
-    let data = fs.readFileSync(
-        "./files/" + filename
-    );
-
-    res.send(data);
-
-});
-
-
-// ===============================
-// XSS Vulnerability
-// ===============================
-
-app.get("/search",(req,res)=>{
-
-    let keyword=req.query.q;
-
-    res.send(
-        "<h1>Search:"+
-        keyword+
-        "</h1>"
-    );
-
-});
-
-
-// ===============================
-// Sensitive Data Exposure
-// ===============================
-
-app.get("/profile",(req,res)=>{
-
-
-    res.json({
-
-        username:"admin",
-
-        password:"admin123",
-
-        creditCard:
-        "4111111111111111",
-
-        token:GITHUB_TOKEN
-
+        return res.json(result);
     });
-
-
 });
 
+app.get("/ping", (req, res, next) => {
+    const host = String(req.query.host || "");
 
+    if (!isValidHost(host)) {
+        return res.status(400).json({ error: "A valid host is required" });
+    }
 
-// ===============================
-// Missing Authentication
-// ===============================
+    execFile("ping", ["-c", "4", host], { timeout: 5000 }, (error, stdout) => {
+        if (error) {
+            return next(error);
+        }
 
-app.delete("/deleteAllUsers",
-(req,res)=>{
-
-
-    res.send(
-        "All users deleted"
-    );
-
-
+        return res.type("text/plain").send(stdout);
+    });
 });
 
+app.post("/hash", (req, res, next) => {
+    const password = req.body.password;
 
+    if (typeof password !== "string" || password.length < 12) {
+        return res.status(400).json({ error: "Password must contain at least 12 characters" });
+    }
 
-// ===============================
-// Insecure Random
-// ===============================
+    const salt = crypto.randomBytes(16);
 
-app.get("/reset-password",
-(req,res)=>{
+    crypto.scrypt(password, salt, 64, (error, derivedKey) => {
+        if (error) {
+            return next(error);
+        }
 
-    let resetToken =
-        Math.random()
-        .toString();
-
-    res.send(resetToken);
-
-
+        return res.json({
+            algorithm: "scrypt",
+            salt: salt.toString("hex"),
+            hash: derivedKey.toString("hex")
+        });
+    });
 });
 
+app.get("/file", async (req, res, next) => {
+    const filename = String(req.query.name || "");
+    const filePath = path.resolve(filesDirectory, filename);
 
+    if (!filePath.startsWith(`${filesDirectory}${path.sep}`)) {
+        return res.status(400).json({ error: "Invalid file path" });
+    }
 
-// ===============================
-// Bad Code Quality
-// ===============================
-
-
-var unusedVariable =
-"never used";
-
-
-function duplicate(){
-
-console.log("duplicate");
-
-}
-
-
-function duplicate2(){
-
-console.log("duplicate");
-
-}
-
-
-
-// Long messy function
-
-function processEverything(){
-
-let a=1;
-let b=2;
-let c=3;
-
-console.log(a);
-console.log(b);
-console.log(c);
-
-if(a){
-
- if(b){
-
-  if(c){
-
-   console.log(
-    "nested callback hell"
-   );
-
-  }
-
- }
-
-}
-
-}
-
-
-// ===============================
-// Bad CORS
-// ===============================
-
-app.use(function(req,res,next){
-
-res.header(
-"Access-Control-Allow-Origin",
-"*"
-);
-
-next();
-
+    try {
+        const data = await fs.readFile(filePath);
+        return res.send(data);
+    } catch (error) {
+        return next(error);
+    }
 });
 
+app.get("/search", (req, res) => {
+    const keyword = String(req.query.q || "");
 
+    return res.json({ search: keyword });
+});
 
-// ===============================
-// Server
-// ===============================
+app.get("/profile", requireAdministrator, (req, res) => {
+    return res.json({ username: req.user.username });
+});
 
-app.listen(
-3000,
-()=>{
+app.delete("/deleteAllUsers", requireAdministrator, (req, res) => {
+    return res.status(501).json({ error: "Bulk deletion is not available" });
+});
 
-console.log(
-"Vulnerable app running"
-);
+app.post("/reset-password", requireAdministrator, (req, res) => {
+    const resetToken = crypto.randomBytes(32).toString("base64url");
 
+    // Store a hash of this value with an expiry in the application's password-reset store.
+    void resetToken;
+    return res.status(202).json({ message: "Password reset request accepted" });
+});
+
+app.use((error, req, res, next) => {
+    void req;
+    void next;
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+});
+
+app.listen(3000, () => {
+    console.log("Application running on port 3000");
 });
