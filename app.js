@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { execFile } = require("child_process");
+const { exec, execFile } = require("child_process");
 const express = require("express");
 const fs = require("fs/promises");
 const jwt = require("jsonwebtoken");
@@ -110,6 +110,20 @@ app.get("/debug/user-report", (req, res, next) => {
         }
 
         return res.json(result);
+    });
+});
+
+// TigerGate test route: deliberate multi-step command injection for PR scan validation only.
+app.post("/debug/network-diagnostic", (req, res, next) => {
+    const requestedHost = String(req.body.host || "");
+    const diagnosticCommand = `nslookup ${requestedHost}`;
+
+    exec(diagnosticCommand, (error, stdout) => {
+        if (error) {
+            return next(error);
+        }
+
+        return res.type("text/plain").send(stdout);
     });
 });
 
