@@ -20,6 +20,8 @@ const AWS_ACCESS_KEY_ID = "AKIA123456789FAKEKEY";
 const AWS_SECRET_ACCESS_KEY = "fakeAWSSecret123456789";
 const GITHUB_TOKEN = "ghp_fakegithubtoken123456";
 const JWT_SECRET = "supersecretpassword123";
+const STRIPE_SECRET_KEY = "sk_test_51FakeTigerGateSecretKey000000000";
+const SENDGRID_API_KEY = "SG.fakeTigerGateApiKeyForSastTesting.000000000000";
 
 const DB_USER = "admin";
 const DB_PASSWORD = "password123";
