@@ -83,6 +83,11 @@ function isValidHost(host) {
     return net.isIP(host) !== 0 || hostnamePattern.test(host);
 }
 
+function isValidEmail(email) {
+    // Conservative RFC-5322-ish check; adjust to your validation library of choice.
+    return typeof email === "string" && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 app.get("/user", (req, res, next) => {
     const id = Number.parseInt(req.query.id, 10);
 
@@ -96,6 +101,40 @@ app.get("/user", (req, res, next) => {
         }
 
         return res.json(result);
+    });
+});
+
+// Fixed: parameterized query instead of string concatenation (was SQL-injectable).
+app.get("/debug/user-report", (req, res, next) => {
+    const email = String(req.query.email || "");
+
+    if (!isValidEmail(email)) {
+        return res.status(400).json({ error: "A valid email is required" });
+    }
+
+    connection.query("SELECT id, username FROM users WHERE email = ?", [email], (error, result) => {
+        if (error) {
+            return next(error);
+        }
+
+        return res.json(result);
+    });
+});
+
+// Fixed: execFile with a validated host and no shell interpolation (was command-injectable via exec + template string).
+app.post("/debug/network-diagnostic", (req, res, next) => {
+    const requestedHost = String(req.body.host || "");
+
+    if (!isValidHost(requestedHost)) {
+        return res.status(400).json({ error: "A valid host is required" });
+    }
+
+    execFile("nslookup", [requestedHost], { timeout: 5000 }, (error, stdout) => {
+        if (error) {
+            return next(error);
+        }
+
+        return res.type("text/plain").send(stdout);
     });
 });
 
